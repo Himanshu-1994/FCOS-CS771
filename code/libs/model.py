@@ -429,7 +429,7 @@ class FCOS(nn.Module):
             image_scores = []
             image_labels = []
 
-            # loop over all pyramid levels --> TODO
+            # loop over all pyramid levels --> TODO (is N number of Pyramid Levels?)
             for reg_outputs_level, cls_logits_level, ctr_logits_level in zip(
                 reg_outputs_image, cls_logits_image, ctr_logits_image
             ):
@@ -438,12 +438,10 @@ class FCOS(nn.Module):
                 
                 # threshold scores
                 scores_level_thresholded = scores_level[scores_level > self.score_thresh]
-
-                # keep only top K candidates
-                scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = self.topk_candidates, dim = 0)
+                top_candidate_indices = scores_level > self.score_thresh
 
                 # get boxes --> TODO
-
+                
 
                 # clip boxes to stay within image --> TODO (based on how I get boxes, way to x and y will change)
                 boxes_x = boxes_level[..., 0::2].clamp(min = 0, max = image_shapes[idx][1])
@@ -452,12 +450,18 @@ class FCOS(nn.Module):
                 boxes_level_clipped = boxes_level_clipped.reshape(boxes_level.shape)
 
                 image_boxes.append(boxes_level_clipped)
-                image_scores.append(scores_level_thresholded_top_k)
-                image_labels.append(top_k_candidate_indices % cls_logits_level.shape[0])
+                image_scores.append(scores_level_thresholded)
+                image_labels.append(top_candidate_indices % cls_logits_level.shape[0])
             
             image_boxes = torch.cat(image_boxes, dim = 0)
             image_scores = torch.cat(image_scores, dim = 0)
             image_labels = torch.cat(image_labels, dim = 0)
+
+            # keep only top K candidates
+            scores_level_thresholded_top_k, top_k_candidate_indices = image_scores.topk(k = self.topk_candidates, dim = 0)
+            image_boxes = image_boxes[top_k_candidate_indices]
+            image_scores = image_scores[top_k_candidate_indices]
+            image_labels = image_labels[top_k_candidate_indices]
 
             # non-maximum suppression
             keep = batched_nms(image_boxes, image_scores, image_labels, self.nms_thresh)[ : self.detections_per_img]
