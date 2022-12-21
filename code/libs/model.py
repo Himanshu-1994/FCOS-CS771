@@ -436,7 +436,8 @@ class FCOS(nn.Module):
                 
                 # threshold scores
                 scores_level_thresholded = scores_level[scores_level > self.score_thresh]
-                top_candidate_indices = scores_level > self.score_thresh
+                thresholded_candidates = scores_level > self.score_thresh
+                thresholded_candidate_indices = thresholded_candidates.nonzero().flatten().tolist()
 
                 # get boxes --> TODO
                 
@@ -449,7 +450,7 @@ class FCOS(nn.Module):
 
                 image_boxes.append(boxes_level_clipped)
                 image_scores.append(scores_level_thresholded)
-                image_labels.append(top_candidate_indices % cls_logits_image[level].shape[0])
+                image_labels.append((len(thresholded_candidate_indices) % cls_logits_image[level].shape[0]) + 1)
             
             image_boxes = torch.cat(image_boxes, dim = 0)
             image_scores = torch.cat(image_scores, dim = 0)
