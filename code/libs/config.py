@@ -19,7 +19,7 @@ DEFAULTS = {
     },
     "loader": {
         "batch_size": 4,
-        "num_workers": 4,
+        "num_workers": 1,
     },
     "input": {
         # min / max size of the input image

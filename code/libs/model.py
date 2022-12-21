@@ -389,7 +389,7 @@ class FCOS(nn.Module):
         all_gt_classes_targets = []
         
         all_gt_reg_out = []
-        all_gt_classes_targets = []
+        all_gt_ctrness_targets = []
 
         for tid,target in enumerate(targets):
           gt_boxes = target['boxes']  # Mx4
@@ -404,7 +404,8 @@ class FCOS(nn.Module):
             
             pred = points[i].view(-1,2)   # HWx2,  or Nx2 (N anchors)
             pairwise_match = pred[:,None,:] - gt_centers[None,:,:] # NxMx2
-
+            #print('pred_b',pred[:,None,:].shape)
+            #print('gt_b',gt_centers[None,:,:].shape)
             pairwise_match = pairwise_match.abs_().max(dim=2).values < (self.center_sampling_radius*stride) # NxM
 
             x, y = pred.unsqueeze(dim=2).unbind(dim=1)  # Nx1,Nx1
@@ -412,14 +413,23 @@ class FCOS(nn.Module):
 
             paired_dist = torch.stack([x - x0, y - y0, x1 - x, y1 - y], dim=2)
             pairwise_match &= paired_dist.min(dim=2).values > 0   # NxM (Inside the GTbox)
-            
-            lt = (pred[:,None,:] - gt_boxes[:,:2,None])    # N,1,2 - M,2,1 --> N,M,2 
-            rb = -(pred[:,None,:] - gt_boxes[:,2:,None])   # N,M,2
+    
+            lt_1 = pred[:,None,:]
+            lt_2 = gt_boxes[:,:2,None]
+            #print('pred_shape',lt_1.shape)
+            #print('gt_shape',lt_2.shape)
+            #lt = lt_1-lt_2
 
-            t_dist = torch.cat([lt,rb],dim=2).abs_().max(dim=2).values # N,M
+            #lt = (pred[:,None,:] - gt_boxes[:,:2,None])    # N,1,2 - M,2,1 --> N,M,2 
+            #rb = -(pred[:,None,:] - gt_boxes[:,2:,None])   # N,M,2
+             
+            t_dist = paired_dist.abs().max(dim=2).values
+            #print("t_dist shape",t_dist.shape)
+            #t_dist = torch.cat([lt,rb],dim=2).abs_().max(dim=2).values # N,M
             lower, upper = reg_range[i][0], reg_range[i][1]
-
-            pairwise_match &= (t_dist > lower) & (paired_dist < upper)  # N,M
+            
+            #print('pairwise_match',pairwise_match.shape)
+            pairwise_match &= (t_dist > lower) & (t_dist < upper)  # N,M
 
             # match the GT box with minimum area, if there are multiple GT matches
             gt_areas = (gt_boxes[:, 2] - gt_boxes[:, 0]) * (gt_boxes[:, 3] - gt_boxes[:, 1])  # M
@@ -448,7 +458,7 @@ class FCOS(nn.Module):
             reg_out = (reg_outputs[i][tid].view(4,-1)).permute(1,0)*stride     # (N(HW),4)
             gt_reg_out = torch.cat([pred-reg_out[:,:2],pred+reg_out[:,2:]],dim=-1)   # HWx4,  or Nx4 (N anchors)
             
-
+            #print("gt_ctrness_targets",gt_ctrness_targets.shape)
             per_stride_gt_classes_targets.append(gt_classes_targets)
             per_stride_gt_boxes_targets.append(gt_boxes_targets)
             per_stride_gt_reg_out.append(gt_reg_out)
@@ -457,8 +467,8 @@ class FCOS(nn.Module):
           
           all_gt_classes_targets.append(torch.cat(per_stride_gt_classes_targets,dim=0))  # List, batchsz. (A,1) 
           all_gt_boxes_targets.append(torch.cat(per_stride_gt_boxes_targets,dim=0))          # List, (A,4) 
-          all_gt_reg_out(torch.cat(per_stride_gt_reg_out,dim=0))     # list ((A,4) : A = (HW)_1+(HW)_2+(HW)_3
-          all_gt_classes_targets.append(torch.cat(per_stride_gt_ctrness_targets),dim=0)
+          all_gt_reg_out.append(torch.cat(per_stride_gt_reg_out,dim=0))     # list ((A,4) : A = (HW)_1+(HW)_2+(HW)_3
+          all_gt_ctrness_targets.append(torch.cat(per_stride_gt_ctrness_targets,dim=0))
 
 
         cls_logits = [t.view(t.shape[0],t.shape[1],-1) for t in cls_logits]
@@ -474,14 +484,17 @@ class FCOS(nn.Module):
                       torch.cat(cls_logits,dim=2).permute(0,2,1).contiguous(), # (bs,A,C)
                       torch.cat(ctr_logits,dim=2).permute(0,2,1).contiguous()) # (bs,A,1)
 
-
-        all_gt_boxes_targets, all_gt_classes_targets = (
+        #print("cls_logits",cls_logits.shape)
+        #print("ctr_logits",ctr_logits.shape)
+        
+        all_gt_boxes_targets, all_gt_classes_targets,all_gt_reg_out,all_gt_ctrness_targets = (
             torch.stack(all_gt_boxes_targets),
             torch.stack(all_gt_classes_targets),
             torch.stack(all_gt_reg_out),
-            torch.stack(all_gt_classes_targets)
+            torch.stack(all_gt_ctrness_targets)
         )      # [bs,A,4], [bs,A,1] , [bs,A,4], [bs,A,1]
 
+        #print("all_gt_ctrness_targets",all_gt_ctrness_targets.shape)
         # compute foregroud
         foregroud_mask = all_gt_classes_targets >= 0
         num_foreground = foregroud_mask.sum().item()
@@ -497,7 +510,7 @@ class FCOS(nn.Module):
         # centerness loss
         ctr_logits = ctr_logits.squeeze(dim=-1)
         ctr_loss = nn.functional.binary_cross_entropy_with_logits(
-            ctr_logits[foregroud_mask], all_gt_classes_targets[foregroud_mask], reduction="sum"
+            ctr_logits[foregroud_mask], all_gt_ctrness_targets[foregroud_mask], reduction="sum"
         )
 
         losses = {}
