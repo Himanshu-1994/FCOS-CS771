@@ -436,8 +436,6 @@ class FCOS(nn.Module):
                 
                 # threshold scores
                 scores_level_thresholded = scores_level[scores_level > self.score_thresh]
-                thresholded_candidates = scores_level > self.score_thresh
-                thresholded_candidate_indices = thresholded_candidates.nonzero().flatten().tolist()
 
                 # keep only top K candidates
                 scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = self.topk_candidates, dim = 0)
