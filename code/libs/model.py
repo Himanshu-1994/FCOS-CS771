@@ -382,7 +382,7 @@ class FCOS(nn.Module):
         # list (batchsize), Number of points for all feature-levels --> GT-box Id
         matched_ids = []
 
-        torch._assert(isinstance(target,list), "Model.py compute_loss: Expected target boxes to be of type List.")
+        #torch._assert(isinstance(target,list), "Model.py compute_loss: Expected target boxes to be of type List.")
         
 
         all_gt_boxes_targets = []
