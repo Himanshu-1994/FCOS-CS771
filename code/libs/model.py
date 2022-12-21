@@ -339,7 +339,7 @@ class FCOS(nn.Module):
         else:
             # inference: decode / postprocess the boxes
             detections = self.inference(
-                points, strides, cls_logits, reg_outputs, ctr_logits, images.image_sizes
+                points, strides, cls_logits, reg_outputs, ctr_logits, images.image_sizes, fpn_features
             )
             # rescale the boxes to the input image resolution
             detections = self.transform.postprocess(
@@ -519,6 +519,95 @@ class FCOS(nn.Module):
     """
 
     def inference(
-        self, points, strides, cls_logits, reg_outputs, ctr_logits, image_shapes
-    ):
+        self, points, strides, cls_logits, reg_outputs, ctr_logits, image_shapes, fpn_features
+    ):  
+        detections = []
+
+        # permute bbox regression output from (N, 4, H, W) to (N, HW, 4).
+        N, _, H, W = reg_outputs.shape
+        reg_outputs = reg_outputs.view(N, -1, 4, H, W)
+        reg_outputs = reg_outputs.permute(0, 3, 4, 1, 2)
+        reg_outputs = reg_outputs.reshape(N, -1, 4)
+
+        # Permute classification output from (N, C, H, W) to (N, HW, C).
+        N, _, H, W = cls_logits.shape
+        cls_logits = cls_logits.view(N, -1, self.num_classes, H, W)
+        cls_logits = cls_logits.permute(0, 3, 4, 1, 2)
+        cls_logits = cls_logits.reshape(N, -1, self.num_classes)
+
+        # permute bbox ctrness output from (N, 1, H, W) to (N, HW, 1).
+        ctr_logits = ctr_logits.view(N, -1, 1, H, W)
+        ctr_logits = ctr_logits.permute(0, 3, 4, 1, 2)
+        ctr_logits = ctr_logits.reshape(N, -1, 1)
+
+        # level sizes
+        level_sizes = [feature.size(2) * feature.size(3) for feature in fpn_features]
+
+        # splits per level
+        split_reg_outputs = list(reg_outputs.split(level_sizes, dim = 1))
+        split_cls_logits = list(cls_logits.split(level_sizes, dim = 1))
+        split_ctr_logits = list(ctr_logits.split(level_sizes, dim = 1))
+
+        # looping over every image
+        for idx in range(len(image_shapes)):
+            # find the regression, classification and correctness score per image
+            cls_logits_image = [classification[idx] for classification in split_cls_logits]
+            reg_outputs_image = [regression[idx] for regression in split_reg_outputs]
+            ctr_logits_image = [centerness[idx] for centerness in split_ctr_logits]
+            
+            image_boxes = []
+            image_scores = []
+            image_labels = []
+
+            # loop over all pyramid levels
+            for level, reg_outputs_level, cls_logits_level, ctr_logits_level in enumerate(zip(
+                reg_outputs_image, cls_logits_image, ctr_logits_image,
+            )):
+                # compute scores
+                scores_level = torch.sqrt(torch.sigmoid(cls_logits_level) * torch.sigmoid(ctr_logits_level)).flatten()
+                
+                # threshold scores
+                scores_level_thresholded = scores_level[scores_level > self.score_thresh]
+
+                # keep only top K candidates
+                scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = self.topk_candidates, dim = 0)
+
+                # get boxes --> TODO
+                left = reg_outputs_level[0] * strides[level]
+                top = reg_outputs_level[1] * strides[level]
+                right = reg_outputs_level[2] * strides[level]
+                bottom = reg_outputs_level[3] * strides[level]
+
+                x_0 = points.permute(2,0,1)[0] - left
+                x_1 = right + points.permute(2,0,1)[0]
+                y_0 = points.permute(2,0,1)[1] - top
+                y_1 = bottom + points.permute(2,0,1)[1]
+
+                # clip boxes to stay within image --> TODO
+                x_0 = x_0.clamp(min = 0, max = image_shapes[idx][1])
+                x_1 = x_1.clamp(min = 0, max = image_shapes[idx][1])
+                y_0 = y_0.clamp(min = 0, max = image_shapes[idx][0])
+                y_1 = y_1.clamp(min = 0, max = image_shapes[idx][0])
+                boxes_level_clipped = torch.stack((boxes_x, boxes_y), dim = boxes_level.dim)
+                boxes_level_clipped = boxes_level_clipped.reshape(boxes_level.shape)
+
+                image_boxes.append(boxes_level_clipped)
+                image_scores.append(scores_level_thresholded_top_k)
+                image_labels.append((top_k_candidate_indices % cls_logits_image[level].shape[0]) + 1)
+            
+            image_boxes = torch.cat(image_boxes, dim = 0)
+            image_scores = torch.cat(image_scores, dim = 0)
+            image_labels = torch.cat(image_labels, dim = 0)
+
+            # non-maximum suppression
+            keep = batched_nms(image_boxes, image_scores, image_labels, self.nms_thresh)[ : self.detections_per_img]
+
+            detections.append(
+                {
+                    "boxes": image_boxes[keep],
+                    "scores": image_scores[keep],
+                    "labels": image_labels[keep],
+                }
+            )
+
         return detections
