@@ -445,16 +445,16 @@ class FCOS(nn.Module):
 
         # looping over every image
         for idx in range(len(image_shapes)):
-            # find the regression, classification and correctness score per image --> TODO
-            cls_logits_image = split_cls_logits[idx]
-            reg_outputs_image = split_reg_outputs[idx]
-            ctr_logits_image = split_ctr_logits[idx]
-
+            # find the regression, classification and correctness score per image
+            cls_logits_image = [classification[idx] for classification in split_cls_logits]
+            reg_outputs_image = [regression[idx] for regression in split_reg_outputs]
+            ctr_logits_image = [centerness[idx] for centerness in split_ctr_logits]
+            
             image_boxes = []
             image_scores = []
             image_labels = []
 
-            # loop over all pyramid levels --> TODO (is N number of Pyramid Levels?)
+            # loop over all pyramid levels
             for level, reg_outputs_level, cls_logits_level, ctr_logits_level in enumerate(zip(
                 reg_outputs_image, cls_logits_image, ctr_logits_image,
             )):
@@ -478,7 +478,7 @@ class FCOS(nn.Module):
                 y_0 = points.permute(2,0,1)[1] - top
                 y_1 = bottom + points.permute(2,0,1)[1]
 
-                # clip boxes to stay within image --> TODO (based on how I get boxes, way to x and y will change)
+                # clip boxes to stay within image --> TODO
                 x_0 = x_0.clamp(min = 0, max = image_shapes[idx][1])
                 x_1 = x_1.clamp(min = 0, max = image_shapes[idx][1])
                 y_0 = y_0.clamp(min = 0, max = image_shapes[idx][0])
