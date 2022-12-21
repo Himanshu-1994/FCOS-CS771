@@ -430,11 +430,9 @@ class FCOS(nn.Module):
             image_labels = []
 
             # loop over all pyramid levels --> TODO (is N number of Pyramid Levels?)
-            for reg_outputs_level, cls_logits_level, ctr_logits_level in zip(
-                reg_outputs_image, cls_logits_image, ctr_logits_image
-            ):
+            for level in range(reg_outputs_image.size[0]):
                 # compute scores
-                scores_level = torch.sqrt(torch.sigmoid(cls_logits_level) * torch.sigmoid(ctr_logits_level)).flatten()
+                scores_level = torch.sqrt(torch.sigmoid(cls_logits_image[level]) * torch.sigmoid(ctr_logits_image[level])).flatten()
                 
                 # threshold scores
                 scores_level_thresholded = scores_level[scores_level > self.score_thresh]
@@ -451,7 +449,7 @@ class FCOS(nn.Module):
 
                 image_boxes.append(boxes_level_clipped)
                 image_scores.append(scores_level_thresholded)
-                image_labels.append(top_candidate_indices % cls_logits_level.shape[0])
+                image_labels.append(top_candidate_indices % cls_logits_image[level].shape[0])
             
             image_boxes = torch.cat(image_boxes, dim = 0)
             image_scores = torch.cat(image_scores, dim = 0)
