@@ -415,5 +415,59 @@ class FCOS(nn.Module):
 
     def inference(
         self, points, strides, cls_logits, reg_outputs, ctr_logits, image_shapes
-    ):
+    ):  
+        detections = []
+
+        # looping over every image
+        for idx in range(len(image_shapes)):
+            # find the regression, classification and correctness score per image --> TODO
+            cls_logits_image = cls_logits[idx]
+            reg_outputs_image = reg_outputs[idx]
+            ctr_logits_image = ctr_logits[idx]
+
+            image_boxes = []
+            image_scores = []
+            image_labels = []
+
+            # loop over all pyramid levels --> TODO
+            for reg_outputs_level, cls_logits_level, ctr_logits_level in zip(
+                reg_outputs_image, cls_logits_image, ctr_logits_image
+            ):
+                # compute scores
+                scores_level = torch.sqrt(torch.sigmoid(cls_logits_level) * torch.sigmoid(ctr_logits_level)).flatten()
+                
+                # threshold scores
+                scores_level_thresholded = scores_level[scores_level > self.score_thresh]
+
+                # keep only top K candidates
+                scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = self.topk_candidates, dim = 0)
+
+                # get boxes --> TODO
+
+
+                # clip boxes to stay within image --> TODO (based on how I get boxes, way to x and y will change)
+                boxes_x = boxes_level[..., 0::2].clamp(min = 0, max = image_shapes[idx][1])
+                boxes_y = boxes_level[..., 1::2].clamp(min = 0, max = image_shapes[idx][0])
+                boxes_level_clipped = torch.stack((boxes_x, boxes_y), dim = boxes_level.dim)
+                boxes_level_clipped = boxes_level_clipped.reshape(boxes_level.shape)
+
+                image_boxes.append(boxes_level_clipped)
+                image_scores.append(scores_level_thresholded_top_k)
+                image_labels.append(top_k_candidate_indices % cls_logits_level.shape[0])
+            
+            image_boxes = torch.cat(image_boxes, dim = 0)
+            image_scores = torch.cat(image_scores, dim = 0)
+            image_labels = torch.cat(image_labels, dim = 0)
+
+            # non-maximum suppression
+            keep = batched_nms(image_boxes, image_scores, image_labels, self.nms_thresh)[ : self.detections_per_img]
+
+            detections.append(
+                {
+                    "boxes": image_boxes[keep],
+                    "scores": image_scores[keep],
+                    "labels": image_labels[keep],
+                }
+            )
+
         return detections
