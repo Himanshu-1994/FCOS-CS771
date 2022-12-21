@@ -407,11 +407,11 @@ class FCOS(nn.Module):
 
             pairwise_match = pairwise_match.abs_().max(dim=2).values < (self.center_sampling_radius*stride) # NxM
 
-            x, y = pred.unsqueeze(dim=2).unbind(dim=1)  # Nx1
-            x0, y0, x1, y1 = gt_boxes.unsqueeze(dim=0).unbind(dim=2)  # 1xM
+            x, y = pred.unsqueeze(dim=2).unbind(dim=1)  # Nx1,Nx1
+            x0, y0, x1, y1 = gt_boxes.unsqueeze(dim=0).unbind(dim=2)  # 1xM each
 
             paired_dist = torch.stack([x - x0, y - y0, x1 - x, y1 - y], dim=2)
-            pairwise_match &= paired_dist.min(dim=2).values > 0   # NxM
+            pairwise_match &= paired_dist.min(dim=2).values > 0   # NxM (Inside the GTbox)
             
             lt = (pred[:,None,:] - gt_boxes[:,:2,None])    # N,1,2 - M,2,1 --> N,M,2 
             rb = -(pred[:,None,:] - gt_boxes[:,2:,None])   # N,M,2
@@ -424,8 +424,8 @@ class FCOS(nn.Module):
             # match the GT box with minimum area, if there are multiple GT matches
             gt_areas = (gt_boxes[:, 2] - gt_boxes[:, 0]) * (gt_boxes[:, 3] - gt_boxes[:, 1])  # M
             pairwise_match = pairwise_match.to(torch.float32) * (1e8 - gt_areas[None, :])
-            min_values, matched_idx = pairwise_match.max(dim=1)  # R, per-anchor match
-            matched_idx[min_values < 1e-5] = -1  # unmatched anchors are assigned -1, (N,)
+            min_vals, matched_idx = pairwise_match.max(dim=1)  # R, per-anchor match
+            matched_idx[min_vals < 1e-5] = -1  # unmatched anchors are assigned -1, (N,)
 
 
             gt_classes_targets = target["labels"][matched_idx.clip(min=0)]   # (N,)
