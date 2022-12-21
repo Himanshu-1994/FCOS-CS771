@@ -439,6 +439,9 @@ class FCOS(nn.Module):
                 thresholded_candidates = scores_level > self.score_thresh
                 thresholded_candidate_indices = thresholded_candidates.nonzero().flatten().tolist()
 
+                # keep only top K candidates
+                scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = self.topk_candidates, dim = 0)
+
                 # get boxes --> TODO
                 
 
@@ -449,18 +452,12 @@ class FCOS(nn.Module):
                 boxes_level_clipped = boxes_level_clipped.reshape(boxes_level.shape)
 
                 image_boxes.append(boxes_level_clipped)
-                image_scores.append(scores_level_thresholded)
-                image_labels.append((len(thresholded_candidate_indices) % cls_logits_image[level].shape[0]) + 1)
+                image_scores.append(scores_level_thresholded_top_k)
+                image_labels.append((top_k_candidate_indices % cls_logits_image[level].shape[0]) + 1)
             
             image_boxes = torch.cat(image_boxes, dim = 0)
             image_scores = torch.cat(image_scores, dim = 0)
             image_labels = torch.cat(image_labels, dim = 0)
-
-            # keep only top K candidates
-            scores_level_thresholded_top_k, top_k_candidate_indices = image_scores.topk(k = self.topk_candidates, dim = 0)
-            image_boxes = image_boxes[top_k_candidate_indices]
-            image_scores = image_scores[top_k_candidate_indices]
-            image_labels = image_labels[top_k_candidate_indices]
 
             # non-maximum suppression
             keep = batched_nms(image_boxes, image_scores, image_labels, self.nms_thresh)[ : self.detections_per_img]
