@@ -384,34 +384,28 @@ class FCOS(nn.Module):
 
         torch._assert(isinstance(target,list), "Model.py compute_loss: Expected target boxes to be of type List.")
         
-        cls_logits = [t.view(t.shape[0],t.shape[1],-1) for t in cls_logits]
-        reg_outputs = [t.view(t.shape[0],t.shape[1],-1) for t in reg_outputs]
-        ctr_logits = [t.view(t.shape[0],t.shape[1],-1) for t in ctr_logits]
-
-        cls_logits,reg_outputs,ctr_logits = (
-                      torch.cat(cls_logits,dim=2).permute(0,2,1).contiguous(), # (bs,A,C)
-                      torch.cat(reg_outputs,dim=2).permute(0,2,1).contiguous(),# (bs,A,4)
-                      torch.cat(ctr_logits,dim=2).permute(0,2,1).contiguous()) # (bs,A,1)
 
         all_gt_boxes_targets = []
         all_gt_classes_targets = []
         
-        all_t_pred = []
+        all_gt_reg_out = []
+        all_gt_classes_targets = []
 
-        for target in targets:
+        for tid,target in enumerate(targets):
           gt_boxes = target['boxes']  # Mx4
           gt_centers = (gt_boxes[:, :2] + gt_boxes[:, 2:]) / 2  # Mx2 (M boxes)
           
           per_stride_gt_classes_targets = []
           per_stride_gt_boxes_targets = []
-          per_stride_t_pred = []
+          per_stride_gt_reg_out = []
+          per_stride_gt_ctrness_targets = []
 
-          for i,s in enumerate(strides):
+          for i,stride in enumerate(strides):
             
             pred = points[i].view(-1,2)   # HWx2,  or Nx2 (N anchors)
             pairwise_match = pred[:,None,:] - gt_centers[None,:,:] # NxMx2
 
-            pairwise_match = pairwise_match.abs_().max(dim=2).values < (self.center_sampling_radius*s) # NxM
+            pairwise_match = pairwise_match.abs_().max(dim=2).values < (self.center_sampling_radius*stride) # NxM
 
             x, y = pred.unsqueeze(dim=2).unbind(dim=1)  # Nx1
             x0, y0, x1, y1 = gt_boxes.unsqueeze(dim=0).unbind(dim=2)  # 1xM
@@ -440,48 +434,77 @@ class FCOS(nn.Module):
 
             lt_pred = pred - gt_boxes_targets[:,:2]         #(N,2)
             rb_pred = gt_boxes_targets[:,2:] - pred         #(N,2)
-            t_pred = torch.cat([lt_pred,rb_pred],dim=2)     #(N,4)
+            t_pred = torch.cat([lt_pred,rb_pred],dim=-1)/stride     #(N,4)
 
+            left_right = t_pred[:, [0, 2]]
+            top_bottom = t_pred[:, [1, 3]]
+
+            gt_ctrness_targets = torch.sqrt(
+                (left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0])
+                * (top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+            )          # (N,)
+
+
+            reg_out = (reg_outputs[i][tid].view(4,-1)).permute(1,0)*stride     # (N(HW),4)
+            gt_reg_out = torch.cat([pred-reg_out[:,:2],pred+reg_out[:,2:]],dim=-1)   # HWx4,  or Nx4 (N anchors)
+            
 
             per_stride_gt_classes_targets.append(gt_classes_targets)
             per_stride_gt_boxes_targets.append(gt_boxes_targets)
-            per_stride_t_pred.append(t_pred)
+            per_stride_gt_reg_out.append(gt_reg_out)
+            per_stride_gt_ctrness_targets.append(gt_ctrness_targets)
+
           
           all_gt_classes_targets.append(torch.cat(per_stride_gt_classes_targets,dim=0))  # List, batchsz. (A,1) 
           all_gt_boxes_targets.append(torch.cat(per_stride_gt_boxes_targets,dim=0))          # List, (A,4) 
-          all_t_pred.append(torch.cat(per_stride_t_pred,dim=0))     # list ((A,4) : A = (HW)_1+(HW)_2+(HW)_3
+          all_gt_reg_out(torch.cat(per_stride_gt_reg_out,dim=0))     # list ((A,4) : A = (HW)_1+(HW)_2+(HW)_3
+          all_gt_classes_targets.append(torch.cat(per_stride_gt_ctrness_targets),dim=0)
+
+
+        cls_logits = [t.view(t.shape[0],t.shape[1],-1) for t in cls_logits]
+        #reg_outputs = [t.view(t.shape[0],t.shape[1],-1) for t in reg_outputs]
+        ctr_logits = [t.view(t.shape[0],t.shape[1],-1) for t in ctr_logits]
+
+        #cls_logits,reg_outputs,ctr_logits = (
+        #              torch.cat(cls_logits,dim=2).permute(0,2,1).contiguous(), # (bs,A,C)
+        #              torch.cat(reg_outputs,dim=2).permute(0,2,1).contiguous(),# (bs,A,4)
+        #              torch.cat(ctr_logits,dim=2).permute(0,2,1).contiguous()) # (bs,A,1)
+        
+        cls_logits,ctr_logits = (
+                      torch.cat(cls_logits,dim=2).permute(0,2,1).contiguous(), # (bs,A,C)
+                      torch.cat(ctr_logits,dim=2).permute(0,2,1).contiguous()) # (bs,A,1)
+
 
         all_gt_boxes_targets, all_gt_classes_targets = (
             torch.stack(all_gt_boxes_targets),
+            torch.stack(all_gt_classes_targets),
+            torch.stack(all_gt_reg_out),
             torch.stack(all_gt_classes_targets)
-        )      # [bs,A,4], [bs,A,1] 
+        )      # [bs,A,4], [bs,A,1] , [bs,A,4], [bs,A,1]
 
         # compute foregroud
         foregroud_mask = all_gt_classes_targets >= 0
         num_foreground = foregroud_mask.sum().item()
-
-        cls_logits = cls_logits.view(cls_logits.shape[0],cls_logits.shape[1],-1,cls_logits.shape[-1])
-        reg_outputs = reg_outputs.view(reg_outputs.shape[0],reg_outputs.shape[1],-1,reg_outputs.shape[-1])
-        ctr_logits = ctr_logits.view(ctr_logits.shape[0],ctr_logits.shape[1],-1,ctr_logits.shape[-1])
-
-        cls_logits = cls_logits.view(cls_logits.shape[0],-1,cls_logits.shape[-1])
-        reg_outputs = reg_outputs.view(reg_outputs.shape[0],-1,reg_outputs.shape[-1])
-        ctr_logits = ctr_logits.view(ctr_logits.shape[0],-1,ctr_logits.shape[-1])
 
         # classification loss
         gt_classes_targets = torch.zeros_like(cls_logits)
         gt_classes_targets[foregroud_mask, all_gt_classes_targets[foregroud_mask]] = 1.0
         cls_loss = sigmoid_focal_loss(cls_logits, gt_classes_targets, reduction="sum")
 
-        reg_loss = giou_loss(boxes1,all_gt_boxes_targets[foregroud_mask],reduction='sum')
+        # regression loss
+        reg_loss = giou_loss(all_gt_reg_out[foregroud_mask],all_gt_boxes_targets[foregroud_mask],reduction='sum')
         
-
+        # centerness loss
+        ctr_logits = ctr_logits.squeeze(dim=-1)
+        ctr_loss = nn.functional.binary_cross_entropy_with_logits(
+            ctr_logits[foregroud_mask], all_gt_classes_targets[foregroud_mask], reduction="sum"
+        )
 
         losses = {}
-        losses['cls_loss'] = cls_loss
-        losses['reg_loss'] = reg_loss
-        losses['ctr_loss'] = ctr_loss
-        final_loss = loss_cls + reg_loss + ctr_loss
+        losses['cls_loss'] = cls_loss / max(1,num_foreground)
+        losses['reg_loss'] = reg_loss / max(1,num_foreground)
+        losses['ctr_loss'] = ctr_loss / max(1,num_foreground)
+        final_loss = cls_loss + reg_loss + ctr_loss
         losses['final_loss'] = final_loss
         return losses
 
