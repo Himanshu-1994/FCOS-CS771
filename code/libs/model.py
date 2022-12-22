@@ -625,7 +625,7 @@ class FCOS(nn.Module):
                 boxes_y = boxes_y.clamp(min = 0, max = image_shape[0])
                 
                 boxes_level_clipped = torch.cat([boxes_x, boxes_y], dim=-1)
-                
+
                 image_boxes.append(boxes_level_clipped)
                 image_scores.append(scores_level_thresholded_top_k)
                 image_labels.append(labels_per_level + 1)    
@@ -634,9 +634,9 @@ class FCOS(nn.Module):
             image_scores = torch.cat(image_scores, dim = 0)
             image_labels = torch.cat(image_labels, dim = 0)
 
-            print("boxes",image_boxes.shape)
-            print("scores",image_scores.shape)
-            print("labels",image_labels.shape)
+            #print("boxes",image_boxes.shape)
+            #print("scores",image_scores.shape)
+            #print("labels",image_labels.shape)
 
             # non-maximum suppression
             keep = batched_nms(image_boxes, image_scores, image_labels, self.nms_thresh)[ : self.detections_per_img]
