@@ -624,7 +624,8 @@ class FCOS(nn.Module):
                 boxes_x = boxes_x.clamp(min = 0, max = image_shape[1])
                 boxes_y = boxes_y.clamp(min = 0, max = image_shape[0])
                 
-                boxes_level_clipped = torch.cat([boxes_x, boxes_y], dim=-1)
+                #boxes_level_clipped = torch.cat([boxes_x, boxes_y], dim=-1)
+                boxes_level_clipped = torch.stack([boxes_x[:,0],boxes_y[:,0],boxes_x[:,1],boxes_y[:,1]],dim=-1)
 
                 image_boxes.append(boxes_level_clipped)
                 image_scores.append(scores_level_thresholded_top_k)
