@@ -570,7 +570,7 @@ class FCOS(nn.Module):
             #reg_outputs_image = reg_outputs[idx]
             #ctr_logits_image = ctr_logits[idx]
             
-            image_shape = image_shapes(idx)
+            image_shape = image_shapes[idx]
 
             image_boxes = []
             image_scores = []
@@ -578,11 +578,11 @@ class FCOS(nn.Module):
 
             # loop over all pyramid levels
             for level, stride in enumerate(strides):
-                num_classes = cls_logits_level.shape[-1]
                 cls_logits_level = cls_logits[level][idx]   # (HW,C)
                 ctr_logits_level = ctr_logits[level][idx]   # (HW,1)
                 reg_outputs_level = reg_outputs[level][idx] # (HW,4)
 
+                num_classes = cls_logits_level.shape[-1]
                 # compute scores
                 scores_level = torch.sqrt(torch.sigmoid(cls_logits_level) * torch.sigmoid(ctr_logits_level)).flatten()
                 # (HW,C)
@@ -629,6 +629,10 @@ class FCOS(nn.Module):
             image_boxes = torch.cat(image_boxes, dim = 0)
             image_scores = torch.cat(image_scores, dim = 0)
             image_labels = torch.cat(image_labels, dim = 0)
+
+            print("boxes",image_boxes.shape)
+            print("scores",image_scores.shape)
+            print("labels",image_labels.shape)
 
             # non-maximum suppression
             keep = batched_nms(image_boxes, image_scores, image_labels, self.nms_thresh)[ : self.detections_per_img]
