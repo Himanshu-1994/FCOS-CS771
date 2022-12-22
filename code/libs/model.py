@@ -559,55 +559,72 @@ class FCOS(nn.Module):
     ):  
         detections = []
 
+        cls_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in cls_logits]  # List. (N,HW,C)
+        reg_outputs = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in reg_outputs]  # List. (N,HW,4)
+        ctr_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in ctr_logits]  # List. (N,HW,1)
+
         # looping over every image
         for idx in range(len(image_shapes)):
             # find the regression, classification and correctness score per image
-            cls_logits_image = cls_logits[idx]
-            reg_outputs_image = reg_outputs[idx]
-            ctr_logits_image = ctr_logits[idx]
+            #cls_logits_image = cls_logits[idx]
+            #reg_outputs_image = reg_outputs[idx]
+            #ctr_logits_image = ctr_logits[idx]
             
+            image_shape = image_shapes(idx)
+
             image_boxes = []
             image_scores = []
             image_labels = []
 
             # loop over all pyramid levels
             for level, stride in enumerate(strides):
-                cls_logits_level = 
-                ctr_logits_level = 
-                reg_outputs_level =
+                num_classes = cls_logits_level.shape[-1]
+                cls_logits_level = cls_logits[level][idx]   # (HW,C)
+                ctr_logits_level = ctr_logits[level][idx]   # (HW,1)
+                reg_outputs_level = reg_outputs[level][idx] # (HW,4)
 
                 # compute scores
                 scores_level = torch.sqrt(torch.sigmoid(cls_logits_level) * torch.sigmoid(ctr_logits_level)).flatten()
-                
+                # (HW,C)
+
                 # threshold scores
-                scores_level_thresholded = scores_level[scores_level > self.score_thresh]
+                keep_ids = scores_level > self.score_thresh
+                scores_level_thresholded = scores_level[keep_ids]
+                topk_idxs = torch.where(keep_ids)[0]
+                num_ids = min(len(topk_idxs),self.topk_candidates)
 
                 # keep only top K candidates
-                scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = self.topk_candidates, dim = 0)
+                scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = num_ids, dim = 0)
+                topk_idxs = topk_idxs[top_k_candidate_indices]
 
+                labels_per_level = topk_idxs % num_classes
+
+                pred = points[level].view(-1,2)
+                reg_out = reg_outputs_level*stride     # (N(HW),4)
+                boxes_pred = torch.cat([pred-reg_out[:,:2],pred+reg_out[:,2:]],dim=-1)   # HWx4,  or Nx4 (N anchors)
+
+                boxes_x = boxes_pred[...,0::2]
+                boxes_y = boxes_pred[...,1::2]
                 # get boxes --> TODO
-                left = reg_outputs_level[0] * stride
-                top = reg_outputs_level[1] * stride
-                right = reg_outputs_level[2] * stride
-                bottom = reg_outputs_level[3] * stride
+                #left = reg_outputs_level[0] * stride
+                #top = reg_outputs_level[1] * stride
+                #right = reg_outputs_level[2] * stride
+                #bottom = reg_outputs_level[3] * stride
 
-                x_0 = points.permute(2,0,1)[0] - left
-                x_1 = right + points.permute(2,0,1)[0]
-                y_0 = points.permute(2,0,1)[1] - top
-                y_1 = bottom + points.permute(2,0,1)[1]
+                #x_0 = points.permute(2,0,1)[0] - left
+                #x_1 = right + points.permute(2,0,1)[0]
+                #y_0 = points.permute(2,0,1)[1] - top
+                #y_1 = bottom + points.permute(2,0,1)[1]
 
                 # clip boxes to stay within image --> TODO
-                x_0 = x_0.clamp(min = 0, max = image_shapes[idx][1])
-                x_1 = x_1.clamp(min = 0, max = image_shapes[idx][1])
-                y_0 = y_0.clamp(min = 0, max = image_shapes[idx][0])
-                y_1 = y_1.clamp(min = 0, max = image_shapes[idx][0])
+                boxes_x = boxes_x.clamp(min = 0, max = image_shape[1])
+                boxes_y = boxes_y.clamp(min = 0, max = image_shape[0])
                 
-                boxes_level_clipped = torch.stack((boxes_x, boxes_y), dim = boxes_level.dim)
-                boxes_level_clipped = boxes_level_clipped.reshape(boxes_level.shape)
+                boxes_level_clipped = torch.cat([boxes_x, boxes_y], dim=-1)
 
                 image_boxes.append(boxes_level_clipped)
                 image_scores.append(scores_level_thresholded_top_k)
-                image_labels.append((top_k_candidate_indices % cls_logits_image[level].shape[0]) + 1)
+                image_labels.append(labels_per_level + 1)    
             
             image_boxes = torch.cat(image_boxes, dim = 0)
             image_scores = torch.cat(image_scores, dim = 0)
