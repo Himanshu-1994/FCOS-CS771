@@ -382,7 +382,7 @@ class FCOS(nn.Module):
         all_gt_boxes_targets = []
         all_gt_classes_targets = []
         
-        all_gt_reg_out = []
+        all_reg_out_boxes = []
         all_gt_ctrness_targets = []
 
         for tid,target in enumerate(targets):
@@ -391,28 +391,26 @@ class FCOS(nn.Module):
           
           per_stride_gt_classes_targets = []
           per_stride_gt_boxes_targets = []
-          per_stride_gt_reg_out = []
+          per_stride_reg_out_boxes = []
           per_stride_gt_ctrness_targets = []
 
           for i,stride in enumerate(strides):
             
-            pred = points[i].view(-1,2)   # HWx2,  or Nx2 (N anchors)
-            pairwise_match = pred[:,None,:] - gt_centers[None,:,:] # NxMx2
-            #print('pred_b',pred[:,None,:].shape)
-            #print('gt_b',gt_centers[None,:,:].shape)
+            point = points[i].view(-1,2)   # HWx2,  or Nx2 (N features)
+            pairwise_match = point[:,None,:] - gt_centers[None,:,:] # NxMx2
+
             pairwise_match = pairwise_match.abs_().max(dim=2).values < (self.center_sampling_radius*stride) # NxM
 
-            x, y = pred.unsqueeze(dim=2).unbind(dim=1)  # Nx1,Nx1
+            x, y = point.unsqueeze(dim=2).unbind(dim=1)  # Nx1,Nx1
             x0, y0, x1, y1 = gt_boxes.unsqueeze(dim=0).unbind(dim=2)  # 1xM each
 
             paired_dist = torch.stack([x - x0, y - y0, x1 - x, y1 - y], dim=2)  #NxMx4
             pairwise_match &= paired_dist.min(dim=2).values > 0   # NxM (Inside the GTbox)
              
             t_dist = paired_dist.abs().max(dim=2).values   # NxM
-            #print("t_dist shape",t_dist.shape)
+
             lower, upper = reg_range[i][0], reg_range[i][1]
-            
-            #print('pairwise_match',pairwise_match.shape)
+
             pairwise_match &= (t_dist > lower) & (t_dist < upper)  # N,M
 
             # match the GT box with minimum area, if there are multiple GT matches
@@ -422,38 +420,46 @@ class FCOS(nn.Module):
             matched_idx[min_vals < 1e-5] = -1  # unmatched anchors are assigned -1, (N,)
 
             gt_classes_targets = target["labels"][matched_idx.clip(min=0)]   # (N,)
-            gt_boxes_targets = target["boxes"][matched_idx.clip(min=0)]      # (N,4)
             gt_classes_targets[matched_idx < 0] = -1
+            
+            gt_boxes_targets = target["boxes"][matched_idx.clip(min=0)]      # (N,4) (x1,y1,x2,y2)
 
-            lt_pred = pred - gt_boxes_targets[:,:2]         #(N,2)
-            rb_pred = gt_boxes_targets[:,2:] - pred         #(N,2)
-            t_pred = torch.cat([lt_pred,rb_pred],dim=-1)/stride     #(N,4) (l*,t*,r*,b*) GT
+            # Calculation of regression targets
+            lt_gt = point - gt_boxes_targets[:,:2]         #(N,2)
+            rb_gt = gt_boxes_targets[:,2:] - point         #(N,2)
+            t_gt = torch.cat([lt_gt,rb_gt],dim=-1)/stride  #(N,4) (l*,t*,r*,b*)/stride GT
+            t_gt_regress = torch.cat([point-t_gt[:,:2],point+t_gt[:,2:]],dim=-1)
 
-            left_right = t_pred[:, [0, 2]]
-            top_bottom = t_pred[:, [1, 3]]
+            # Predicted [l*,t*,r*,b*]
+            reg_out = (reg_outputs[i][tid].view(4,-1)).permute(1,0)  #(N(HW),4), reg_outputs[i] = (bs,4,H,W)
+            
+            #Predicted box coordinates from (x,y) using predicted [l*,t*,r*,b*]
+
+            reg_out_boxes = torch.cat([point-reg_out[:,:2],point+reg_out[:,2:]],dim=-1) # N(HW)x4, 
+            
+            # Calculation of centerness targets
+            left_right = t_gt[:, [0, 2]]
+            top_bottom = t_gt[:, [1, 3]]
 
             gt_ctrness_targets = torch.sqrt(
                 (left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0])
                 * (top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
             )          # (N,)
             
-            #reg_outputs[i] = (bs,4,H,W)
-            reg_out = (reg_outputs[i][tid].view(4,-1)).permute(1,0)*stride #(N(HW),4)
-            #Predicted box coordinates after scaling with stride
-            gt_reg_out = torch.cat([pred-reg_out[:,:2],pred+reg_out[:,2:]],dim=-1) # N(HW)x4, 
-            
             per_stride_gt_classes_targets.append(gt_classes_targets)
-            per_stride_gt_boxes_targets.append(gt_boxes_targets)
-            per_stride_gt_reg_out.append(gt_reg_out)
+            per_stride_gt_boxes_targets.append(t_gt_regress)
+            per_stride_reg_out_boxes.append(reg_out_boxes)
             per_stride_gt_ctrness_targets.append(gt_ctrness_targets)
 
           
           all_gt_classes_targets.append(torch.cat(per_stride_gt_classes_targets,dim=0))  # List, batchsz. (A,1) 
           all_gt_boxes_targets.append(torch.cat(per_stride_gt_boxes_targets,dim=0))          # List, (A,4) 
-          all_gt_reg_out.append(torch.cat(per_stride_gt_reg_out,dim=0))     # list ((A,4) : A = (HW)_1+(HW)_2+(HW)_3
+          all_reg_out_boxes.append(torch.cat(per_stride_reg_out_boxes,dim=0))     # list ((A,4) : A = (HW)_1+(HW)_2+(HW)_3
           all_gt_ctrness_targets.append(torch.cat(per_stride_gt_ctrness_targets,dim=0))
 
 
+        # use reshape
+        # (bs,C,H,W)
         cls_logits = [t.view(t.shape[0],t.shape[1],-1) for t in cls_logits]   # List (bs,C,H*W)
         #reg_outputs = [t.view(t.shape[0],t.shape[1],-1) for t in reg_outputs]
         ctr_logits = [t.view(t.shape[0],t.shape[1],-1) for t in ctr_logits]   # List (bs,1,H*W)
@@ -462,10 +468,10 @@ class FCOS(nn.Module):
                       torch.cat(cls_logits,dim=2).permute(0,2,1).contiguous(), # (bs,A,C)
                       torch.cat(ctr_logits,dim=2).permute(0,2,1).contiguous()) # (bs,A,1)
         
-        all_gt_boxes_targets, all_gt_classes_targets,all_gt_reg_out,all_gt_ctrness_targets = (
+        all_gt_boxes_targets, all_gt_classes_targets,all_reg_out_boxes,all_gt_ctrness_targets = (
             torch.stack(all_gt_boxes_targets),
             torch.stack(all_gt_classes_targets),
-            torch.stack(all_gt_reg_out),
+            torch.stack(all_reg_out_boxes),
             torch.stack(all_gt_ctrness_targets)
         )      # [bs,A,4], [bs,A,1] , [bs,A,4], [bs,A,1]
 
@@ -479,7 +485,7 @@ class FCOS(nn.Module):
         cls_loss = sigmoid_focal_loss(cls_logits, gt_classes_targets, reduction="sum")
 
         # regression loss
-        reg_loss = giou_loss(all_gt_reg_out[foregroud_mask],all_gt_boxes_targets[foregroud_mask],reduction='sum')
+        reg_loss = giou_loss(all_reg_out_boxes[foregroud_mask],all_gt_boxes_targets[foregroud_mask],reduction='sum')
         
         # centerness loss
         ctr_logits = ctr_logits.squeeze(dim=-1)
@@ -533,9 +539,9 @@ class FCOS(nn.Module):
     ):  
         detections = []
 
-        cls_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in cls_logits]  # List. (N,HW,C)
-        reg_outputs = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in reg_outputs]  # List. (N,HW,4)
-        ctr_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in ctr_logits]  # List. (N,HW,1)
+        cls_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in cls_logits]  # List. [st] (bs,HW,C)
+        reg_outputs = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in reg_outputs]  # List. [st] (bs,HW,4)
+        ctr_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in ctr_logits]  # List. [st] (bs,HW,1)
 
         # looping over every image
         for idx in range(len(image_shapes)):
@@ -572,11 +578,11 @@ class FCOS(nn.Module):
                 labels_per_level = topk_idxs % num_classes
 
                 # get boxes --> 
-                pred = points[level].view(-1,2)
-                reg_out = reg_outputs_level*stride     # (N(HW),4)
-                boxes_pred = torch.cat([pred-reg_out[:,:2],pred+reg_out[:,2:]],dim=-1)   #N(HW))x4
+                point = points[level].view(-1,2)       # N(HW,2)
+                reg_out = reg_outputs_level*stride     # (N(HW),4)    [l*,t*,r*,b*]xstride
+                boxes_pred = torch.cat([point-reg_out[:,:2],point+reg_out[:,2:]],dim=-1)   #N(HW)x4
 
-                boxes_pred = boxes_pred[box_ids]
+                boxes_pred = boxes_pred[box_ids]    # (Number of kept boxes,4)
 
                 boxes_x = boxes_pred[...,0::2]
                 boxes_y = boxes_pred[...,1::2]
@@ -585,7 +591,7 @@ class FCOS(nn.Module):
                 boxes_x = boxes_x.clamp(min = 0, max = image_shape[1])
                 boxes_y = boxes_y.clamp(min = 0, max = image_shape[0])
                 
-                #boxes_level_clipped = torch.cat([boxes_x, boxes_y], dim=-1)
+                # (Number of boxes,4)
                 boxes_level_clipped = torch.stack([boxes_x[:,0],boxes_y[:,0],boxes_x[:,1],boxes_y[:,1]],dim=-1)
 
                 image_boxes.append(boxes_level_clipped)
