@@ -585,7 +585,7 @@ class FCOS(nn.Module):
                 num_classes = cls_logits_level.shape[-1]
                 # compute scores
                 scores_level = torch.sqrt(torch.sigmoid(cls_logits_level) * torch.sigmoid(ctr_logits_level)).flatten()
-                # (HW,C)
+                # (HW,C) -->(HW*C)
 
                 # threshold scores
                 keep_ids = scores_level > self.score_thresh
@@ -596,6 +596,8 @@ class FCOS(nn.Module):
                 # keep only top K candidates
                 scores_level_thresholded_top_k, top_k_candidate_indices = scores_level_thresholded.topk(k = num_ids, dim = 0)
                 topk_idxs = topk_idxs[top_k_candidate_indices]
+
+                box_ids = torch.div(topk_idxs,num_classes,rounding_mode='floor')
 
                 labels_per_level = topk_idxs % num_classes
 
@@ -621,6 +623,7 @@ class FCOS(nn.Module):
                 boxes_y = boxes_y.clamp(min = 0, max = image_shape[0])
                 
                 boxes_level_clipped = torch.cat([boxes_x, boxes_y], dim=-1)
+                boxes_level_clipped = boxes_level_clipped[box_ids]
 
                 image_boxes.append(boxes_level_clipped)
                 image_scores.append(scores_level_thresholded_top_k)
