@@ -539,9 +539,9 @@ class FCOS(nn.Module):
     ):  
         detections = []
 
-        cls_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in cls_logits]  # List. [st] (bs,HW,C)
-        reg_outputs = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in reg_outputs]  # List. [st] (bs,HW,4)
-        ctr_logits = [t.view(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in ctr_logits]  # List. [st] (bs,HW,1)
+        cls_logits = [t.reshape(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in cls_logits]  # List. [st] (bs,HW,C)
+        reg_outputs = [t.reshape(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in reg_outputs]  # List. [st] (bs,HW,4)
+        ctr_logits = [t.reshape(t.shape[0],t.shape[1],-1).permute(0,2,1) for t in ctr_logits]  # List. [st] (bs,HW,1)
 
         # looping over every image
         for idx in range(len(image_shapes)):
@@ -578,7 +578,7 @@ class FCOS(nn.Module):
                 labels_per_level = topk_idxs % num_classes
 
                 # get boxes --> 
-                point = points[level].view(-1,2)       # N(HW,2)
+                point = points[level].reshape(-1,2)       # N(HW,2)
                 reg_out = reg_outputs_level*stride     # (N(HW),4)    [l*,t*,r*,b*]xstride
                 boxes_pred = torch.cat([point-reg_out[:,:2],point+reg_out[:,2:]],dim=-1)   #N(HW)x4
 
