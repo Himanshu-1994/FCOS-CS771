@@ -397,6 +397,9 @@ class FCOS(nn.Module):
           for i,stride in enumerate(strides):
             
             point = points[i].reshape(-1,2)   # HWx2,  or Nx2 (N features)
+            # (x,y)
+            point = torch.flip(point,dims=(1,))
+
             pairwise_match = point[:,None,:] - gt_centers[None,:,:] # NxMx2
 
             pairwise_match = pairwise_match.abs_().max(dim=2).values < (self.center_sampling_radius*stride) # NxM
@@ -416,19 +419,21 @@ class FCOS(nn.Module):
             # match the GT box with minimum area, if there are multiple GT matches
             gt_areas = (gt_boxes[:, 2] - gt_boxes[:, 0]) * (gt_boxes[:, 3] - gt_boxes[:, 1])  # (M,)
             pairwise_match = pairwise_match.to(torch.float32) * (1.0e7 - gt_areas[None, :])   # (N,M)
-            min_vals, matched_idx = pairwise_match.max(dim=1)  # R, per-anchor match
-            matched_idx[min_vals < 1e-5] = -1  # unmatched anchors are assigned -1, (N,)
+            max_vals, matched_idx = pairwise_match.max(dim=1)  # R, per-anchor match
+            matched_idx[max_vals < 1e-5] = -1  # unmatched anchors are assigned -1, (N,)
 
             gt_classes_targets = target["labels"][matched_idx.clip(min=0)]   # (N,)
             gt_classes_targets[matched_idx < 0] = -1
             
             gt_boxes_targets = target["boxes"][matched_idx.clip(min=0)]      # (N,4) (x1,y1,x2,y2)
-
+            #[x0,y0,x1,y1]
             # Calculation of regression targets
             lt_gt = point - gt_boxes_targets[:,:2]                 #(N,2)
             rb_gt = gt_boxes_targets[:,2:] - point                 #(N,2)
             t_gt = torch.cat([lt_gt,rb_gt],dim=-1)/(1.0 * stride)  #(N,4) (l*,t*,r*,b*)/stride GT
+            #(l*,t*,r*,b*)
             t_gt_regress = torch.cat([point-t_gt[:,:2],point+t_gt[:,2:]],dim=-1)
+            #[x0_t,y0_t,x1_t,y1_t]
 
             # Predicted [l*,t*,r*,b*]
             reg_out = (reg_outputs[i][tid].reshape(4,-1)).permute(1,0)  #(N(HW),4), reg_outputs[i] = (bs,4,H,W)
@@ -480,7 +485,8 @@ class FCOS(nn.Module):
         num_foreground = foregroud_mask.sum().item()
 
         # classification loss
-        gt_classes_targets = torch.zeros_like(cls_logits)
+        gt_classes_targets = torch.zeros_like(cls_logits)  #check requires grad (False)
+        # Verify again
         gt_classes_targets[foregroud_mask, all_gt_classes_targets[foregroud_mask]] = 1.0
         cls_loss = sigmoid_focal_loss(cls_logits, gt_classes_targets, reduction="sum")
 
@@ -577,8 +583,10 @@ class FCOS(nn.Module):
 
                 labels_per_level = topk_idxs % num_classes
 
-                # get boxes --> 
+                # get boxes --> XY
                 point = points[level].reshape(-1,2)       # N(HW,2)
+                point = torch.flip(point,dims=(1,))
+                #x_p,y_p = point[:,1],point[:,0]
                 reg_out = reg_outputs_level*stride     # (N(HW),4)    [l*,t*,r*,b*]xstride
                 boxes_pred = torch.cat([point-reg_out[:,:2],point+reg_out[:,2:]],dim=-1)   #N(HW)x4
 

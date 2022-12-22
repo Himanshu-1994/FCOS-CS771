@@ -44,7 +44,7 @@ DEFAULTS = {
         # number of object categories (excluding background)
         "num_classes": 20,
         # regression range for each pyramid level
-        "regression_range": [(0, 32), (32, 64), (64, 128)],
+        "regression_range": [(0, 32), (32, 64), (64, 100000)],
     },
     "train_cfg": {
         # radius used for center sampling during training
