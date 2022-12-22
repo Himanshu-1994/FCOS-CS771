@@ -605,6 +605,8 @@ class FCOS(nn.Module):
                 reg_out = reg_outputs_level*stride     # (N(HW),4)
                 boxes_pred = torch.cat([pred-reg_out[:,:2],pred+reg_out[:,2:]],dim=-1)   # HWx4,  or Nx4 (N anchors)
 
+                boxes_pred = boxes_pred[box_ids]
+
                 boxes_x = boxes_pred[...,0::2]
                 boxes_y = boxes_pred[...,1::2]
                 # get boxes --> TODO
@@ -623,8 +625,7 @@ class FCOS(nn.Module):
                 boxes_y = boxes_y.clamp(min = 0, max = image_shape[0])
                 
                 boxes_level_clipped = torch.cat([boxes_x, boxes_y], dim=-1)
-                boxes_level_clipped = boxes_level_clipped[box_ids]
-
+                
                 image_boxes.append(boxes_level_clipped)
                 image_scores.append(scores_level_thresholded_top_k)
                 image_labels.append(labels_per_level + 1)    
