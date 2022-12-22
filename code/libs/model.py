@@ -396,7 +396,7 @@ class FCOS(nn.Module):
 
           for i,stride in enumerate(strides):
             
-            point = points[i].view(-1,2)   # HWx2,  or Nx2 (N features)
+            point = points[i].reshape(-1,2)   # HWx2,  or Nx2 (N features)
             pairwise_match = point[:,None,:] - gt_centers[None,:,:] # NxMx2
 
             pairwise_match = pairwise_match.abs_().max(dim=2).values < (self.center_sampling_radius*stride) # NxM
@@ -425,13 +425,13 @@ class FCOS(nn.Module):
             gt_boxes_targets = target["boxes"][matched_idx.clip(min=0)]      # (N,4) (x1,y1,x2,y2)
 
             # Calculation of regression targets
-            lt_gt = point - gt_boxes_targets[:,:2]         #(N,2)
-            rb_gt = gt_boxes_targets[:,2:] - point         #(N,2)
-            t_gt = torch.cat([lt_gt,rb_gt],dim=-1)/stride  #(N,4) (l*,t*,r*,b*)/stride GT
+            lt_gt = point - gt_boxes_targets[:,:2]                 #(N,2)
+            rb_gt = gt_boxes_targets[:,2:] - point                 #(N,2)
+            t_gt = torch.cat([lt_gt,rb_gt],dim=-1)/(1.0 * stride)  #(N,4) (l*,t*,r*,b*)/stride GT
             t_gt_regress = torch.cat([point-t_gt[:,:2],point+t_gt[:,2:]],dim=-1)
 
             # Predicted [l*,t*,r*,b*]
-            reg_out = (reg_outputs[i][tid].view(4,-1)).permute(1,0)  #(N(HW),4), reg_outputs[i] = (bs,4,H,W)
+            reg_out = (reg_outputs[i][tid].reshape(4,-1)).permute(1,0)  #(N(HW),4), reg_outputs[i] = (bs,4,H,W)
             
             #Predicted box coordinates from (x,y) using predicted [l*,t*,r*,b*]
 
@@ -460,9 +460,9 @@ class FCOS(nn.Module):
 
         # use reshape
         # (bs,C,H,W)
-        cls_logits = [t.view(t.shape[0],t.shape[1],-1) for t in cls_logits]   # List (bs,C,H*W)
+        cls_logits = [t.reshape(t.shape[0],t.shape[1],-1) for t in cls_logits]   # List (bs,C,H*W)
         #reg_outputs = [t.view(t.shape[0],t.shape[1],-1) for t in reg_outputs]
-        ctr_logits = [t.view(t.shape[0],t.shape[1],-1) for t in ctr_logits]   # List (bs,1,H*W)
+        ctr_logits = [t.reshape(t.shape[0],t.shape[1],-1) for t in ctr_logits]   # List (bs,1,H*W)
 
         cls_logits,ctr_logits = (
                       torch.cat(cls_logits,dim=2).permute(0,2,1).contiguous(), # (bs,A,C)
